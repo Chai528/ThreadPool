@@ -3,7 +3,7 @@
 #include <thread>
 #include <iostream>
 
-const int TASK_MAX_THRESHHOLD = 1024;
+const int TASK_MAX_THRESHHOLD = 4;
 
 //线程池构造
 ThreadPool::ThreadPool()
@@ -35,14 +35,23 @@ void ThreadPool::setTaskQueMaxThreshHold(int threshhold) {
 //给线程池提交任务     用户调用该接口，传入任务对象，生产任务
 void ThreadPool::submitTask(std::shared_ptr<Task> sp) {
 	//获取锁
+	std::unique_lock<std::mutex> lock(taskQueMtx_);
 
-
-	//线程的通信   等待任务队列有空余
-
+	//线程的通信   等待任务队列有空余  wait    wait_for持续等一段时间     wait_until 设了个等待时点
+	//用户提交任务，最长不能阻塞超过1s,否则判断提交任务失败，返回
+	if (!notFull_.wait_for(lock, std::chrono::seconds(1),
+		[&]()->bool {return taskQue_.size() < taskQueMaxThreshHold_;	})) {
+		//表示notFull_ 等待1s,条件依然没有满足
+		std::cerr << "task queue is full, submit task fail." << std::endl;
+		return;
+	}
+	
 	//如果有空余，把任务放入任务队列中
+	taskQue_.emplace(sp);
+	taskSize_++;
 
-	//因为新放了任务，任务队列肯定不空了，在notEmpty_上进行通知
-
+	//因为新放了任务，任务队列肯定不空了，在notEmpty_上进行通知，赶快分配线程执行任务
+	notEmpty_.notify_all();
 
 }
 
@@ -67,8 +76,42 @@ void ThreadPool::start(int initThreadSize) {
 
 // 定义线程函数   线程池的所有线程从任务队列里面消费任务
 void ThreadPool::threadFunc() {
-	std::cout << "begin threadFunc tid:" << std::this_thread::get_id() << std::endl;
-	std::cout << "end threadFunc tid:" << std::this_thread::get_id()<<std::endl;
+	/*std::cout << "begin threadFunc tid:" << std::this_thread::get_id() << std::endl;
+	std::cout << "end threadFunc tid:" << std::this_thread::get_id()<<std::endl;*/
+
+	for (;;) {
+		std::shared_ptr<Task> task; {
+			//获取锁
+			std::unique_lock<std::mutex> lock(taskQueMtx_);
+
+			std::cout << "tid:" << std::this_thread::get_id() << "尝试获取任务..." << std::endl;
+
+
+			//等待notEmpty_条件
+			notEmpty_.wait(lock, [&]()->bool {return taskQue_.size() > 0; });
+
+			std::cout << "tid:" << std::this_thread::get_id() << "获取任务成功..." << std::endl;
+
+			//从任务队列里面取出一个任务
+			task = taskQue_.front();
+			taskQue_.pop();
+			taskSize_--;
+
+			//如果依然有剩余任务，继续通知其他的线程执行任务
+			if (taskQue_.size() > 0) {
+				notEmpty_.notify_all();
+			}
+
+			//取出一个任务，进行通知，通知可以继续提交生产任务
+			notFull_.notify_all();
+		}//释放锁
+		//当前线程负责执行这个任务
+		if (task!=nullptr) {
+			task->run();
+		}
+
+	}
+
 }
 
 
