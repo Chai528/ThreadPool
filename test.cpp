@@ -29,7 +29,7 @@ public:
 	// C++17 Any类型
 	Any run() { //线程代码    // run方法最终就在线程池分配的线程中去做执行了!
 		std::cout << "tid:" << std::this_thread::get_id()<<"begin!"<<std::endl;
-		std::this_thread::sleep_for(std::chrono::seconds(1));
+		std::this_thread::sleep_for(std::chrono::seconds(3));
 		uLong sum = 0;
 		for (uLong i = begin_; i <= end_;i++ ) {
 			sum += i;
@@ -57,7 +57,7 @@ int main(){
 		pool.submitTask(std::make_shared<MyTask>(100000001, 200000000));
 		uLong sum1 = res1.get().cast_<uLong>(); //get返回了一个Any类型，怎么转成具体的类型呢？
 		cout << sum1 << endl;
-	}
+	}// 这里Result对象也要析构!!! 在vs下，条件变量析构会释放相应资源的
 	
 	cout << "main over !" << endl;
 	getchar();

@@ -126,7 +126,9 @@ void ThreadPool::start(int initThreadSize) {
 // 定义线程函数   线程池的所有线程从任务队列里面消费任务
 void ThreadPool::threadFunc(int threadid) {// 线程函数返回，相应的线程也就结束了
 	auto lastTime = std::chrono::high_resolution_clock().now();
-	while(isPoolRunning_) {
+
+	// 所有任务必须执行完成，线程池才可以回收所有线程资源
+	for (;;){
 		std::shared_ptr<Task> task; {
 			//获取锁
 			std::unique_lock<std::mutex> lock(taskQueMtx_);
@@ -139,7 +141,16 @@ void ThreadPool::threadFunc(int threadid) {// 线程函数返回，相应的线程也就结束了
 			
 			// 每一秒中返回一次   怎么区分：超时返回？还是有任务待执行返回
 			// 锁 + 双重判断
-			while (isPoolRunning_ && taskQue_.size() == 0) {
+			while (taskQue_.size() == 0) {
+				// 线程池要结束，回收线程资源
+				if (!isPoolRunning_)
+				{
+					threads_.erase(threadid); // std::this_thread::getid()
+					std::cout << "threadid:" << std::this_thread::get_id() << " exit!"
+						<< std::endl;
+					exitCond_.notify_all();
+					return; // 线程函数结束，线程结束
+				}
 				if (poolMode_ == PoolMode::MODE_CACHED) {
 					//条件变量超时返回
 					if (std::cv_status::timeout == notEmpty_.wait_for(lock, std::chrono::seconds(1))) {
@@ -204,9 +215,6 @@ void ThreadPool::threadFunc(int threadid) {// 线程函数返回，相应的线程也就结束了
 		idleThreadSize_++;
 		lastTime = std::chrono::high_resolution_clock().now(); //更新线程执行完任务的时间
 	}
-		threads_.erase(threadid);  //不能写系统的 std::this_thread::get_id() ,这里的是我们自己设置的
-		std::cout << "threadid:" << std::this_thread::get_id() << "exit!" << std::endl;
-		exitCond_.notify_all();
 }
 
 bool ThreadPool::checkRunningState() const{
